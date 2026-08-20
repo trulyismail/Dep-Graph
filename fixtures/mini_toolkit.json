@@ -1,0 +1,224 @@
+[
+  {
+    "slug": "TASKR_LIST_PROJECTS",
+    "name": "List projects",
+    "description": "Lists all projects in the workspace.",
+    "inputParameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "outputParameters": {
+      "type": "object",
+      "properties": {
+        "data": { "$ref": "#/$defs/ListProjectsResponse" },
+        "error": { "type": "string" },
+        "successful": { "type": "boolean" }
+      },
+      "required": ["data", "successful"],
+      "$defs": {
+        "ListProjectsResponse": {
+          "type": "object",
+          "properties": {
+            "projects": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/Project" }
+            }
+          },
+          "required": ["projects"]
+        },
+        "Project": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer", "description": "Unique identifier of the project." },
+            "name": { "type": "string" }
+          },
+          "required": ["id", "name"]
+        }
+      }
+    },
+    "tags": ["projects", "readOnlyHint"],
+    "toolkit": { "slug": "taskr", "name": "taskr" }
+  },
+  {
+    "slug": "TASKR_LIST_TASKS",
+    "name": "List tasks",
+    "description": "Lists all tasks in a project.",
+    "inputParameters": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "integer",
+          "description": "Identifier of the project whose tasks should be listed."
+        }
+      },
+      "required": ["project_id"]
+    },
+    "outputParameters": {
+      "type": "object",
+      "properties": {
+        "data": { "$ref": "#/$defs/ListTasksResponse" },
+        "error": { "type": "string" },
+        "successful": { "type": "boolean" }
+      },
+      "required": ["data", "successful"],
+      "$defs": {
+        "ListTasksResponse": {
+          "type": "object",
+          "properties": {
+            "tasks": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/Task" }
+            }
+          },
+          "required": ["tasks"]
+        },
+        "Task": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer", "description": "Unique identifier of the task." },
+            "title": { "type": "string" }
+          },
+          "required": ["id", "title"]
+        }
+      }
+    },
+    "tags": ["tasks", "readOnlyHint"],
+    "toolkit": { "slug": "taskr", "name": "taskr" }
+  },
+  {
+    "slug": "TASKR_CREATE_TASK",
+    "name": "Create task",
+    "description": "Creates a new task in a project.",
+    "inputParameters": {
+      "type": "object",
+      "properties": {
+        "project_id": {
+          "type": "integer",
+          "description": "Identifier of the project to add the task to."
+        },
+        "title": { "type": "string", "description": "Title of the new task." }
+      },
+      "required": ["project_id", "title"]
+    },
+    "outputParameters": {
+      "type": "object",
+      "properties": {
+        "data": { "$ref": "#/$defs/CreateTaskResponse" },
+        "error": { "type": "string" },
+        "successful": { "type": "boolean" }
+      },
+      "required": ["data", "successful"],
+      "$defs": {
+        "CreateTaskResponse": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer", "description": "Unique identifier of the created task." },
+            "title": { "type": "string" }
+          },
+          "required": ["id", "title"]
+        }
+      }
+    },
+    "tags": ["tasks", "createHint"],
+    "toolkit": { "slug": "taskr", "name": "taskr" }
+  },
+  {
+    "slug": "TASKR_ADD_TASK_COMMENT",
+    "name": "Add task comment",
+    "description": "Adds a comment to an existing task.",
+    "inputParameters": {
+      "type": "object",
+      "properties": {
+        "task_id": { "type": "integer", "description": "Identifier of the task to comment on." },
+        "body": { "type": "string", "description": "Comment text." }
+      },
+      "required": ["task_id", "body"]
+    },
+    "outputParameters": {
+      "type": "object",
+      "properties": {
+        "data": { "$ref": "#/$defs/AddTaskCommentResponse" },
+        "error": { "type": "string" },
+        "successful": { "type": "boolean" }
+      },
+      "required": ["data", "successful"],
+      "$defs": {
+        "AddTaskCommentResponse": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer", "description": "Unique identifier of the created comment." },
+            "body": { "type": "string" }
+          },
+          "required": ["id", "body"]
+        }
+      }
+    },
+    "tags": ["comments", "createHint"],
+    "toolkit": { "slug": "taskr", "name": "taskr" }
+  },
+  {
+    "slug": "TASKR_GET_USER",
+    "name": "Get authenticated user",
+    "description": "Returns the currently authenticated user.",
+    "inputParameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "outputParameters": {
+      "type": "object",
+      "properties": {
+        "data": { "$ref": "#/$defs/GetUserResponse" },
+        "error": { "type": "string" },
+        "successful": { "type": "boolean" }
+      },
+      "required": ["data", "successful"],
+      "$defs": {
+        "GetUserResponse": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer" },
+            "email": { "type": "string" }
+          },
+          "required": ["id", "email"]
+        }
+      }
+    },
+    "tags": ["users", "readOnlyHint"],
+    "toolkit": { "slug": "taskr", "name": "taskr" }
+  },
+  {
+    "slug": "TASKR_ARCHIVE_PROJECT",
+    "name": "Archive project",
+    "description": "Archives a project so it no longer appears in active lists.",
+    "inputParameters": {
+      "type": "object",
+      "properties": {
+        "project_id": { "type": "integer", "description": "Identifier of the project to archive." }
+      },
+      "required": ["project_id"]
+    },
+    "outputParameters": {
+      "type": "object",
+      "properties": {
+        "data": { "$ref": "#/$defs/ArchiveProjectResponse" },
+        "error": { "type": "string" },
+        "successful": { "type": "boolean" }
+      },
+      "required": ["data", "successful"],
+      "$defs": {
+        "ArchiveProjectResponse": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer" },
+            "archived": { "type": "boolean" }
+          },
+          "required": ["id", "archived"]
+        }
+      }
+    },
+    "tags": ["projects", "destructiveHint"],
+    "toolkit": { "slug": "taskr", "name": "taskr" }
+  }
+]

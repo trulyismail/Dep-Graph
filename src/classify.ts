@@ -19,6 +19,12 @@ export interface ClassifiedTool extends NormalizedTool {
 // cliff down to username at ~8.6% — 0.15 cleanly separates the two
 // clusters without naming owner/repo/org anywhere.
 export const AMBIENT_THRESHOLD = 0.15;
+// A percentage alone is meaningless on a small catalog: on a 6-tool
+// toolkit, a param required by just 2 tools already clears 15%. Require an
+// absolute floor too, so "ambient" stays a whole-ecosystem signal instead
+// of small-sample noise — this is what lets `project_id`/`task_id` still
+// classify as derived on fixtures/mini_toolkit.json.
+export const AMBIENT_MIN_COUNT = 5;
 
 const DERIVED_NAME_RE = /(^|_)(id|number|sha|ref|slug|key|login|node_id)$/i;
 const DERIVED_DESCRIPTION_PHRASES = [
@@ -39,7 +45,7 @@ function buildAmbientParamNames(tools: NormalizedTool[]): Set<string> {
   const ambient = new Set<string>();
   const total = tools.length || 1;
   for (const [name, count] of counts) {
-    if (count / total >= AMBIENT_THRESHOLD) ambient.add(name);
+    if (count >= AMBIENT_MIN_COUNT && count / total >= AMBIENT_THRESHOLD) ambient.add(name);
   }
   return ambient;
 }
