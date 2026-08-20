@@ -20,8 +20,28 @@ export interface Edge {
   label: string;
   confidence: number;
   evidence: string;
-  source: "schema";
+  source: "schema" | "llm";
+  reason?: string;
 }
+
+export interface AmbiguousCase {
+  consumerSlug: string;
+  param: string;
+  description: string;
+  candidates: Array<{ slug: string; service: string; path: string }>;
+}
+
+export interface MatchResult {
+  edges: Edge[];
+  ambiguous: AmbiguousCase[];
+}
+
+// A tie/near-tie among schema candidates is exactly what Phase 7's LLM pass
+// targets: a close score gap, or 3+ candidates tied at the very top (the
+// N-way-tie case found auditing comment_id during Phase 3 — TOP_K=2 can't
+// pick a winner among truly equal candidates, an LLM might).
+const CLOSE_SCORE_GAP = 0.15;
+const TIE_MIN_COUNT = 3;
 
 // Precision over recall (constraint 9): keep few, confidently-correct
 // producers rather than every plausible one.
@@ -153,9 +173,10 @@ function scoreCandidate(
   return { score, rules };
 }
 
-export function matchDependencies(tools: ClassifiedTool[]): Edge[] {
+export function matchDependencies(tools: ClassifiedTool[]): MatchResult {
   const index = buildFieldIndex(tools);
   const edges: Edge[] = [];
+  const ambiguous: AmbiguousCase[] = [];
 
   for (const consumer of tools) {
     for (const paramName of consumer.requires.derived) {
@@ -178,10 +199,8 @@ export function matchDependencies(tools: ClassifiedTool[]): Edge[] {
         }
       }
 
-      const kept = [...byProducer.values()]
-        .sort((a, b) => b.score - a.score)
-        .filter((c) => c.score >= THRESHOLD)
-        .slice(0, TOP_K);
+      const scored = [...byProducer.values()].sort((a, b) => b.score - a.score);
+      const kept = scored.filter((c) => c.score >= THRESHOLD).slice(0, TOP_K);
 
       for (const c of kept) {
         edges.push({
@@ -193,8 +212,25 @@ export function matchDependencies(tools: ClassifiedTool[]): Edge[] {
           source: "schema",
         });
       }
+
+      const closeGap = scored.length >= 2 && scored[0]!.score - scored[1]!.score < CLOSE_SCORE_GAP;
+      const topTied = scored.length
+        ? scored.filter((c) => scored[0]!.score - c.score < 1e-9).length >= TIE_MIN_COUNT
+        : false;
+      if (kept.length === 0 || closeGap || topTied) {
+        ambiguous.push({
+          consumerSlug: consumer.slug,
+          param: paramName,
+          description: consumer.inputParams.find((p) => p.name === paramName)?.description ?? "",
+          candidates: scored.slice(0, 5).map((c) => ({
+            slug: c.tool.slug,
+            service: c.tool.service,
+            path: c.field.path,
+          })),
+        });
+      }
     }
   }
 
-  return edges;
+  return { edges, ambiguous };
 }

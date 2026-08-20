@@ -5,15 +5,18 @@
  *   - The path to a toolkit's catalog JSON is passed as a CLI ARGUMENT, e.g.
  *     `node --import tsx src/generate.ts path/to/catalog.json`. We append it as the last
  *     argument, so reading the final argv entry works whatever else your command carries.
- *   - Write your graph to `dependency_graph.json` in the working directory.
- *   - For LLM access, the OpenAI SDK reads OPENAI_API_KEY / OPENAI_BASE_URL from the
- *     environment (set from your assessment page's AI credentials; the same are provided
- *     when we run your generator). Use an OpenRouter model id such as `openai/gpt-4o`.
+ *   - Write your graph to `dependency_graph.json` in the working directory (plus
+ *     viz/graph.html, a self-contained visualization).
+ *   - Fully offline by default. Pass --llm to enable the optional disambiguation pass
+ *     (src/llm.ts), which reads AI_API_KEY/AI_BASE_URL/AI_MODEL from the environment or
+ *     a local .env — never required otherwise.
  */
 import { writeFileSync } from "fs";
 import { loadCatalog, normalizeCatalog } from "./catalog.js";
 import { classifyCatalog } from "./classify.js";
 import { matchDependencies, type Edge } from "./match.js";
+import { resolveAmbiguous } from "./llm.js";
+import { writeViz } from "./viz.js";
 
 interface Node {
   id: string;
@@ -26,13 +29,16 @@ interface Graph {
   edges: Edge[];
 }
 
-// The catalog path is the last CLI argument (we append it after your run command).
-const CATALOG_PATH = process.argv.length > 2 ? process.argv[process.argv.length - 1] : undefined;
+// Catalog path: the last non-flag CLI argument, so `--llm` can appear
+// anywhere without being mistaken for it.
+const ARGS = process.argv.slice(2);
+const LLM_ENABLED = ARGS.includes("--llm");
+const CATALOG_PATH = [...ARGS].reverse().find((a) => !a.startsWith("--"));
 const OUT_PATH = "dependency_graph.json";
 
 async function generate(): Promise<Graph> {
   if (!CATALOG_PATH) {
-    throw new Error("pass the toolkit catalog path as the first argument");
+    throw new Error("pass the toolkit catalog path as an argument");
   }
   const rawTools = loadCatalog(CATALOG_PATH);
   const normalized = normalizeCatalog(rawTools);
@@ -42,9 +48,34 @@ async function generate(): Promise<Graph> {
     id: t.slug,
     service: t.service,
     operation: t.operation,
-    requires: t.requires,
+    requires: { user: [...t.requires.user], derived: [...t.requires.derived] },
   }));
-  const edges: Edge[] = matchDependencies(classified);
+  const { edges, ambiguous } = matchDependencies(classified);
+
+  if (LLM_ENABLED) {
+    const { edges: llmEdges, noneParams, requestsMade, approxTokens } = await resolveAmbiguous(ambiguous);
+    const existingKeys = new Set(edges.map((e) => `${e.from}|${e.to}|${e.label}`));
+    let added = 0;
+    for (const e of llmEdges) {
+      const key = `${e.from}|${e.to}|${e.label}`;
+      if (existingKeys.has(key)) continue;
+      existingKeys.add(key);
+      edges.push(e);
+      added++;
+    }
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    for (const { consumerSlug, param } of noneParams) {
+      const node = byId.get(consumerSlug);
+      if (!node) continue;
+      node.requires.derived = node.requires.derived.filter((p) => p !== param);
+      if (!node.requires.user.includes(param)) node.requires.user.push(param);
+    }
+    console.error(
+      `llm: ${ambiguous.length} ambiguous case(s), ${requestsMade} request(s), ~${approxTokens} tokens, ` +
+        `${added} edge(s) added (baseline was ${edges.length - added}), ${noneParams.length} resolved to user_input`,
+    );
+  }
+
   return { nodes, edges };
 }
 
@@ -90,6 +121,7 @@ function printStats(graph: Graph): void {
 async function main() {
   const graph = sortGraph(await generate());
   writeFileSync(OUT_PATH, JSON.stringify(graph, null, 2) + "\n", "utf-8");
+  writeViz(graph);
   printStats(graph);
 }
 
