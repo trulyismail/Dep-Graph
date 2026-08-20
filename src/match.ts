@@ -78,6 +78,23 @@ interface ScoredCandidate extends ProducerField {
   rules: string[];
 }
 
+/**
+ * The path segment naming the array itself (e.g. "issues" in
+ * "data.issues[].number") — the closest array boundary to the leaf, so a
+ * nested array further down wins over an outer one. This is what a list
+ * tool actually enumerates, which is a sharper signal than the tool's
+ * overall `service`: an "issue events" tool has service "issues" too (it's
+ * issue-related) but its array elements are events, not issues.
+ */
+function arrayBoundaryTokens(path: string): Set<string> | undefined {
+  const segments = path.split(".");
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i]!;
+    if (seg.endsWith("[]")) return new Set(tokenize(seg.slice(0, -2)));
+  }
+  return undefined;
+}
+
 function scoreCandidate(
   paramName: string,
   resourceTokens: Set<string>,
@@ -85,13 +102,29 @@ function scoreCandidate(
   field: OutputField,
 ): { score: number; rules: string[] } | undefined {
   const serviceTokens = tokenize(producer.service);
-  const pathTokens = tokenize(field.path);
   const serviceMatches = serviceTokens.some((t) => resourceTokens.has(t));
-  const pathMatches = pathTokens.some((t) => resourceTokens.has(t));
-  if (!serviceMatches && !pathMatches) return undefined; // candidacy gate (b)
+
+  let primaryMatch: string | undefined;
+  if (field.inArray) {
+    // A list tool's array might enumerate something other than the
+    // resource it's tagged with (issue *events*, not issues) — require the
+    // array's own element type to match, not just anything on the path.
+    const boundary = arrayBoundaryTokens(field.path);
+    if (boundary && [...boundary].some((t) => resourceTokens.has(t))) {
+      primaryMatch = "resource:array-element";
+    }
+  } else {
+    if (serviceMatches) {
+      primaryMatch = "resource:service";
+    } else {
+      const pathTokens = tokenize(field.path);
+      if (pathTokens.some((t) => resourceTokens.has(t))) primaryMatch = "resource:path";
+    }
+  }
+  if (!primaryMatch) return undefined; // candidacy gate (b)
 
   let score = 1.0; // key + resource both match
-  const rules = [serviceMatches ? "resource:service" : "resource:path"];
+  const rules = [primaryMatch];
 
   if (field.inArray) {
     score += 0.4;
@@ -103,6 +136,14 @@ function scoreCandidate(
   } else if (producer.operation === "create") {
     score += 0.2;
     rules.push("+0.2 create");
+  }
+  // Corroboration: the producer's own declared purpose also agrees with
+  // the resource hint, not just this one field's placement. Breaks ties in
+  // favor of the canonical/unfiltered list tool over scoped variants (e.g.
+  // "list repository issues" over "list issues assigned to me").
+  if (serviceMatches && primaryMatch !== "resource:service") {
+    score += 0.1;
+    rules.push("+0.1 service-corroboration");
   }
   if (producer.requires.derived.includes(paramName)) {
     score -= 0.5;
