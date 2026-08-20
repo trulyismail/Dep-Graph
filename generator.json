@@ -1,4 +1,4 @@
 {
-  "build": "npm install --legacy-peer-deps",
-  "run": "node --import tsx src/generate.ts"
+  "build": "npm install",
+  "run": "npx tsx src/generate.ts"
 }

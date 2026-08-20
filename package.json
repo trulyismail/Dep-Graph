@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "generate": "node --import tsx src/generate.ts",
-    "selfcheck": "node --import tsx src/selfcheck.ts"
+    "selfcheck": "node --import tsx src/selfcheck.ts",
+    "viz": "node --import tsx src/generate.ts github_catalog.json && node -e \"console.log('open viz/graph.html in a browser')\""
   },
   "dependencies": {
     "openai": "^6.48.0"

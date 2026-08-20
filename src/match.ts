@@ -120,6 +120,7 @@ function scoreCandidate(
   resourceTokens: Set<string>,
   producer: ClassifiedTool,
   field: OutputField,
+  isBareFallback: boolean,
 ): { score: number; rules: string[] } | undefined {
   const serviceTokens = tokenize(producer.service);
   const serviceMatches = serviceTokens.some((t) => resourceTokens.has(t));
@@ -133,6 +134,17 @@ function scoreCandidate(
     if (boundary && [...boundary].some((t) => resourceTokens.has(t))) {
       primaryMatch = "resource:array-element";
     }
+  } else if (isBareFallback) {
+    // A bare param (no underscore prefix, e.g. "key") has no hint of its
+    // own — it fell back to the consumer's own service, which is often too
+    // broad on its own (nearly anything "repos"-scoped would qualify, e.g.
+    // a repository's *license* key matching a deploy *key* param). Require
+    // the field's immediate parent segment to relate, not just the
+    // tool-level service.
+    const segments = field.path.split(".");
+    const parent = segments.length >= 2 ? segments[segments.length - 2]! : segments[0]!;
+    const parentTokens = tokenize(parent.replace(/\[\]$/, ""));
+    if (parentTokens.some((t) => resourceTokens.has(t))) primaryMatch = "resource:path";
   } else {
     if (serviceMatches) {
       primaryMatch = "resource:service";
@@ -181,6 +193,7 @@ export function matchDependencies(tools: ClassifiedTool[]): MatchResult {
   for (const consumer of tools) {
     for (const paramName of consumer.requires.derived) {
       const { resourceHint, key } = splitDerivedParam(paramName, consumer.service);
+      const isBareFallback = !paramName.includes("_");
       const resourceTokens = new Set(tokenize(resourceHint));
       const candidates = index.get(singularize(key.toLowerCase())) ?? [];
 
@@ -191,7 +204,7 @@ export function matchDependencies(tools: ClassifiedTool[]): MatchResult {
       const byProducer = new Map<string, ScoredCandidate>();
       for (const { tool: producer, field } of candidates) {
         if (producer.slug === consumer.slug) continue; // hard: no self-edges, ever
-        const result = scoreCandidate(paramName, resourceTokens, producer, field);
+        const result = scoreCandidate(paramName, resourceTokens, producer, field, isBareFallback);
         if (!result) continue;
         const existing = byProducer.get(producer.slug);
         if (!existing || result.score > existing.score) {
