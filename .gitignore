@@ -6,3 +6,5 @@ dependency_graph.json
 .litmus/
 .claude/
 .github/hooks/
+.env
+.llm-cache.json
