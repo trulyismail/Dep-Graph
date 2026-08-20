@@ -13,6 +13,7 @@
 import { writeFileSync } from "fs";
 import { loadCatalog, normalizeCatalog } from "./catalog.js";
 import { classifyCatalog } from "./classify.js";
+import { matchDependencies } from "./match.js";
 
 interface Node {
   id: string;
@@ -32,10 +33,6 @@ interface Graph {
 const CATALOG_PATH = process.argv.length > 2 ? process.argv[process.argv.length - 1] : undefined;
 const OUT_PATH = "dependency_graph.json";
 
-/**
- * Phase 1-2 wiring: normalize + classify only. Edge inference (Phase 3) is
- * not implemented yet, so this still emits zero edges.
- */
 async function generate(): Promise<Graph> {
   if (!CATALOG_PATH) {
     throw new Error("pass the toolkit catalog path as the first argument");
@@ -50,7 +47,7 @@ async function generate(): Promise<Graph> {
     operation: t.operation,
     requires: t.requires,
   }));
-  const edges: Edge[] = [];
+  const edges: Edge[] = matchDependencies(classified);
   return { nodes, edges };
 }
 

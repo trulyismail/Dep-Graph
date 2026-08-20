@@ -209,7 +209,7 @@ function isStructuralTag(tag: string): boolean {
   return HINT_TAG_RE.test(tag) || PLATFORM_MARKER_TAGS.has(tag.toLowerCase());
 }
 
-function singularize(word: string): string {
+export function singularize(word: string): string {
   const w = word.toLowerCase();
   if (w.endsWith("ies") && w.length > 3) return w.slice(0, -3) + "y";
   if (/(s|x|ch|sh)es$/.test(w)) return w.slice(0, -2);
