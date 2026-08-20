@@ -9,14 +9,11 @@
  *   - For LLM access, the OpenAI SDK reads OPENAI_API_KEY / OPENAI_BASE_URL from the
  *     environment (set from your assessment page's AI credentials; the same are provided
  *     when we run your generator). Use an OpenRouter model id such as `openai/gpt-4o`.
- *
- * This is a SKELETON. Replace the inference in generate() with your own approach. Do not
- * hardcode a toolkit's relations: your node ids must be slugs from the catalog you are
- * handed, and your output must change when the input changes.
  */
-import { readFileSync, writeFileSync } from "fs";
+import { writeFileSync } from "fs";
+import { loadCatalog, normalizeCatalog } from "./catalog.js";
+import { classifyCatalog } from "./classify.js";
 
-type Tool = Record<string, any>;
 interface Node {
   id: string;
   service?: string;
@@ -35,40 +32,30 @@ interface Graph {
 const CATALOG_PATH = process.argv.length > 2 ? process.argv[process.argv.length - 1] : undefined;
 const OUT_PATH = "dependency_graph.json";
 
-function loadCatalog(): Tool[] {
+/**
+ * Phase 1-2 wiring: normalize + classify only. Edge inference (Phase 3) is
+ * not implemented yet, so this still emits zero edges.
+ */
+async function generate(): Promise<Graph> {
   if (!CATALOG_PATH) {
     throw new Error("pass the toolkit catalog path as the first argument");
   }
-  const data = JSON.parse(readFileSync(CATALOG_PATH, "utf-8"));
-  // getRawComposioTools returns a list of tools (or { tools: [...] }).
-  return Array.isArray(data) ? data : (data.tools ?? data.items ?? []);
-}
+  const rawTools = loadCatalog(CATALOG_PATH);
+  const normalized = normalizeCatalog(rawTools);
+  const classified = classifyCatalog(normalized);
 
-function slugOf(tool: Tool): string | undefined {
-  return tool.slug ?? tool.name ?? tool.function?.name;
-}
-
-/**
- * TODO: your inference goes here.
- *
- * The baseline below emits every tool as a node and no edges. It passes the
- * "nodes are real slugs" check but scores ~0 on correctness (no dependencies) and
- * will fail the has-edges gate. Replace it: for each tool's required inputs, infer
- * which other tools produce a matching output id/field, and emit those edges.
- * Runtime LLM inference is encouraged. Keep node ids sourced from the catalog you
- * were given.
- */
-async function generate(tools: Tool[]): Promise<Graph> {
-  const nodes: Node[] = tools
-    .map(slugOf)
-    .filter((s): s is string => !!s)
-    .map((id) => ({ id }));
+  const nodes: Node[] = classified.map((t) => ({
+    id: t.slug,
+    service: t.service,
+    operation: t.operation,
+    requires: t.requires,
+  }));
   const edges: Edge[] = [];
   return { nodes, edges };
 }
 
 async function main() {
-  const graph = await generate(loadCatalog());
+  const graph = await generate();
   writeFileSync(OUT_PATH, JSON.stringify(graph, null, 2), "utf-8");
   console.error(
     `wrote ${graph.nodes.length} nodes, ${graph.edges.length} edges to ${OUT_PATH}`,
