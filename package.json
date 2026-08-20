@@ -1,0 +1,15 @@
+{
+  "name": "composio-dep-graph-generator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "node --import tsx src/generate.ts",
+    "selfcheck": "node --import tsx src/selfcheck.ts"
+  },
+  "dependencies": {
+    "openai": "^6.48.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}
