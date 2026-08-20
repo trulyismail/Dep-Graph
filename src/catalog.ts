@@ -121,7 +121,8 @@ const MAX_LEAF_FIELDS = 2000; // guard against pathological/cyclic schemas
 
 function resolveRef(ref: string, defs: Record<string, JsonSchema>): JsonSchema | undefined {
   const m = ref.match(/^#\/(?:\$defs|definitions)\/(.+)$/);
-  return m ? defs[m[1]] : undefined;
+  const key = m?.[1];
+  return key !== undefined ? defs[key] : undefined;
 }
 
 function walkSchema(

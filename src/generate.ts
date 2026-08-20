@@ -13,16 +13,13 @@
 import { writeFileSync } from "fs";
 import { loadCatalog, normalizeCatalog } from "./catalog.js";
 import { classifyCatalog } from "./classify.js";
-import { matchDependencies } from "./match.js";
+import { matchDependencies, type Edge } from "./match.js";
 
 interface Node {
   id: string;
-  service?: string;
-}
-interface Edge {
-  from: string;
-  to: string;
-  label?: string;
+  service: string;
+  operation: string;
+  requires: { user: string[]; derived: string[] };
 }
 interface Graph {
   nodes: Node[];
@@ -51,12 +48,49 @@ async function generate(): Promise<Graph> {
   return { nodes, edges };
 }
 
-async function main() {
-  const graph = await generate();
-  writeFileSync(OUT_PATH, JSON.stringify(graph, null, 2), "utf-8");
-  console.error(
-    `wrote ${graph.nodes.length} nodes, ${graph.edges.length} edges to ${OUT_PATH}`,
+/**
+ * Sort nodes/edges into a fixed order so identical input always produces a
+ * byte-identical file (zero git diff on rerun), independent of catalog
+ * array order, Map iteration order, or sort stability quirks.
+ */
+function sortGraph(graph: Graph): Graph {
+  const nodes = [...graph.nodes].sort((a, b) => a.id.localeCompare(b.id));
+  const edges = [...graph.edges].sort(
+    (a, b) =>
+      a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || a.label.localeCompare(b.label),
   );
+  return { nodes, edges };
+}
+
+function printStats(graph: Graph): void {
+  console.error(`nodes: ${graph.nodes.length}`);
+  console.error(`edges: ${graph.edges.length}`);
+
+  const labelFreq = new Map<string, number>();
+  for (const e of graph.edges) labelFreq.set(e.label, (labelFreq.get(e.label) ?? 0) + 1);
+  console.error(`distinct labels: ${labelFreq.size}`);
+
+  const edgeKeys = new Set(graph.edges.map((e) => `${e.to}|${e.label}`));
+  let noProducer = 0;
+  for (const n of graph.nodes) {
+    for (const d of n.requires.derived) {
+      if (!edgeKeys.has(`${n.id}|${d}`)) noProducer++;
+    }
+  }
+  console.error(
+    `derived params with no producer found: ${noProducer} ` +
+      `(genuine "must ask the user" cases — a finding, not a bug)`,
+  );
+
+  const top10 = [...labelFreq.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  console.error("top 10 labels:");
+  for (const [label, count] of top10) console.error(`  ${label}: ${count}`);
+}
+
+async function main() {
+  const graph = sortGraph(await generate());
+  writeFileSync(OUT_PATH, JSON.stringify(graph, null, 2) + "\n", "utf-8");
+  printStats(graph);
 }
 
 main().catch((e) => {
