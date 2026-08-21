@@ -1,56 +1,129 @@
-# build a tool dependency graph generator (60-120 mins)
+# Dep Graph
 
-we care about the quality and structure of the dependency relationships you discover
+**A generator that reads *any* Composio toolkit catalog and figures out, for every tool's
+required parameters, whether an agent should ask the user for it — or call another tool first.**
 
-some actions need precursor actions before being able to execute them
+Point it at a JSON catalog. It reads the schemas, infers which tools produce the values other
+tools need, and writes a scored, evidence-backed dependency graph. No hand-written rules about
+GitHub, no fixed graph — the same code runs on a catalog it's never seen, argued below.
 
-a concrete example
-
-1. the tool `GITHUB_CREATE_AN_ISSUE_COMMENT` which needs an `issue_number`
-2. which can be got by `GITHUB_LIST_REPOSITORY_ISSUES` as an example, there could be other ways to get an `issue_number` too
-
-a second more dense exmaple
-the merge tool `GITHUB_MERGE_A_PULL_REQUEST` needs a `pull_number`, if you only have a branch name you first list the pull requests with `GITHUB_LIST_PULL_REQUESTS` to find the matching one and then you can merge it
-
-when we agentically execute actions inside composio, we need to know either what info to get from the user or what other action we should take before we execute the action.
-
-you are supposed to build a program that generates this dependency graph — a generator that reads a toolkit's tool catalog and outputs the graph, instead of hand-writing it
-
-to keep this limited in scope, we give you [Github](https://docs.composio.dev/toolkits/github) as an example toolkit to build and test against — but your generator should generalize: it reads a toolkit's catalog and produces the graph, so it works for any toolkit, not just this one
-
-the final submission should be a visualized dependency graph where i can see connection (this is not super important just should exist for me to see if graph with edges and nodes)
-
-## deliverable
-
-commit a **generator** at the repo root — a program that produces a `dependency_graph.json` from a toolkit's catalog. we run it: your generator is called with the path to a toolkit's catalog as a command-line argument (e.g. `node src/generate.ts path/to/catalog.json`), and it writes `dependency_graph.json` at the repo root (declare build/run in `generator.json`). it must read the catalog it's given, not hardcode a fixed graph. the graph shape our checks read:
-
-```json
-{
-  "nodes": [{ "id": "GITHUB_CREATE_AN_ISSUE", "service": "issues" }],
-  "edges": [{ "from": "GITHUB_LIST_REPOSITORY_ISSUES", "to": "GITHUB_CREATE_AN_ISSUE_COMMENT", "label": "issue_number" }]
-}
+```bash
+npm install
+npx tsx src/generate.ts github_catalog.json   # -> dependency_graph.json + viz/graph.html
+npm run selfcheck                             # golden chains, invariants, generalization proof
 ```
 
-- each edge is `producer -> consumer`; `label` is the id/field the producer supplies (e.g. `issue_number`, `pull_number`).
-- use Composio's tool slugs for node ids (e.g. `GITHUB_CREATE_AN_ISSUE`), taken from the catalog you were given.
-- also commit a visualization (nodes + edges you can see) and the tool catalog you use.
+## The problem in one example
 
-## get started
+`GITHUB_MERGE_A_PULL_REQUEST` needs a `pull_number`. If all you have is a branch name, you
+first need to call `GITHUB_LIST_PULL_REQUESTS` to find it. Multiply that by ~900 tools and
+dozens of similar dependencies, and hand-writing the graph doesn't scale — so this generates it
+from the catalog's own schemas instead.
 
-1. the GitHub tool catalog is already provided at `github_catalog.json` — no api key needed.
-2. write your generator in `src/generate.ts` to read a toolkit's catalog and produce the graph. run `npm run selfcheck` to try it on `github_catalog.json` as you iterate.
-3. use node/tsx or python (`bun` isn't guaranteed when we run your generator).
+```mermaid
+graph LR
+  A[GITHUB_LIST_PULL_REQUESTS] -->|pull_number| B[GITHUB_MERGE_A_PULL_REQUEST]
+  C[GITHUB_LIST_REPOSITORY_ISSUES] -->|issue_number| D[GITHUB_CREATE_AN_ISSUE_COMMENT]
+```
 
-for language models, use the **AI API credentials** (a Base URL and API key) shown on your Litmus assessment page. they work with the OpenAI SDK: point the client's `baseURL`/`base_url` at that url and pass the key, and call an allowed model such as `openai/gpt-4o`. your usage counts against the assessment's token budget.
+The naive fix — match parameter names against output field names — fails immediately: producers
+expose generic keys like `number` or `id` nested in arrays, while consumers ask for qualified
+ones like `pull_number`. Matching on the bare key alone wires *every* list tool to *every*
+consumer that needs any id at all.
 
-you can implement this with whatever language you want, feel free to use language models and coding tools
+## How it actually works
 
-## submit
+```mermaid
+flowchart TD
+  cat[catalog JSON] --> norm[catalog.ts\nnormalize schemas, walk $ref/$defs\nderive service + operation]
+  norm --> cls[classify.ts\nuser_input vs derived,\nfrequency-based ambient scope]
+  cls --> match[match.ts\nsplit param into resourceHint + key,\nscore candidate producers]
+  match --> emit[generate.ts\ndeterministic sort, write graph + viz]
+  match -.ambiguous cases.-> llm[llm.ts — opt-in, --llm only]
+  llm -.resolved edges.-> emit
+```
 
-once you are done, run `litmus submit` from your assessment folder. make sure your generator (see **deliverable** above) is committed.
+1. **Normalize** (`src/catalog.ts`) — accepts array or `{items}` catalogs, flat or JSON-Schema
+   params, and recursively walks output schemas (`properties` → `items` → `anyOf` → `$ref`/`$defs`)
+   down to flat leaf fields with a full path, e.g. `data.issues[].number`.
+2. **Classify** (`src/classify.ts`) — every *required* input param is labeled `user_input` or
+   `derived`, using id/number/sha-style name patterns, description phrases, and a
+   frequency-detected "ambient scope" bucket for params like `owner`/`repo`/`org` that show up
+   on a large fraction of the whole catalog — never a hardcoded name list.
+3. **Match** (`src/match.ts`) — the core. Splits a derived param into a *resource hint* and a
+   *key* (`pull_number` → `pull` + `number`), and requires the producer's **array element
+   type** — the path segment right before `[]` — to agree with the hint. That's what tells
+   `GITHUB_LIST_PULL_REQUESTS` apart from the dozens of other tools that also happen to expose a
+   bare `number`.
+4. **Score, don't just match** — candidates get `+0.4` for genuinely enumerating entities
+   (array), `+0.3`/`+0.2` for read/create operations, `+0.1` when the producer's whole-tool
+   purpose corroborates, `-0.5` if the producer itself requires that same param (circular). Top
+   2 survive, precision over recall throughout.
+5. **Emit deterministically** — nodes and edges are explicitly sorted before writing, so two
+   runs on the same catalog produce a byte-identical file.
+6. **Disambiguate — optionally** (`src/llm.ts`, behind `--llm`) — for the residue where
+   schema-matching found zero candidates, a close score gap, or a 3-way tie at the top score. It
+   never touches the rest of the graph, never runs by default, caches responses so reruns cost
+   zero tokens, and degrades to the deterministic result on any failure.
 
-## activity tracking
+## Proving it generalizes
 
-your work is tracked automatically while you work (file changes, git history, and AI-tool prompts) and included when you `litmus submit`. there is nothing to run, just commit often.
+`npm run selfcheck` runs the exact same code, unmodified, against
+[`fixtures/mini_toolkit.json`](fixtures/mini_toolkit.json) — a hand-invented 6-tool task-tracker
+toolkit (`TASKR_*`) — and asserts the expected edges appear. There's also a build-time grep
+test that fails if the literal string `GITHUB` ever shows up in the matching logic. This isn't
+a GitHub-shaped generator that happens to also run elsewhere; the toolkit's vocabulary is
+inferred from whatever catalog it's handed, every time.
 
-NOTE:  Feel free to use LLM, you will be judged by the quality of output, eval...
+## Try it
+
+```
+current run on github_catalog.json:
+  893 nodes · 714 edges · 122 distinct services · 72 distinct labels
+```
+
+Open [`viz/graph.html`](viz/graph.html) directly in a browser — no server needed, the graph
+data is inlined. Color-coded by service, directed arrows, hover for the edge's label, filter by
+service, search by slug, isolated nodes hidden by default.
+
+## Project layout
+
+```
+src/
+  catalog.ts    normalize the catalog + derive service/operation
+  classify.ts   user_input vs derived required-param classification
+  match.ts      the scoring engine — the core of the project
+  llm.ts        optional, opt-in disambiguation pass
+  viz.ts        writes the self-contained HTML visualization
+  generate.ts   entrypoint, wires everything together
+  validate.ts   golden chains, shape invariants, generalization proof
+fixtures/
+  mini_toolkit.json   invented toolkit, proves generalization
+viz/
+  graph.html          generated visualization
+APPROACH.md    the scoring model, in ~35 lines
+WALKTHROUGH.md pipeline tour + Q&A
+```
+
+## Design principles
+
+- **Precision over recall.** A confidently-correct 700-edge graph beats a 5,000-edge graph full
+  of plausible-looking noise. Zero-producer derived params are printed as a finding — genuine
+  "must ask the user" cases — not treated as a failure.
+- **Offline by default.** No network call, no API key, on the default path. The LLM pass is
+  strictly additive and scoped to the ambiguous tail.
+- **Evidence, not a black box.** Every edge carries `confidence`, `evidence` (the exact producer
+  field path and which scoring rules fired), and `source` (`schema` or `llm`).
+
+## Known limitations
+
+Homonym collisions between genuinely different resources that share an English word — a *check
+run* vs. a *workflow run*, a *PR review* vs. a *deployment review* — aren't resolved by schema
+alone; the `--llm` pass targets exactly this when it triggers, but not every instance produces a
+tie. No multi-hop resolution (A needs B needs C isn't chased transitively) and no cross-toolkit
+dependencies. Full writeup in [`APPROACH.md`](APPROACH.md).
+
+---
+
+Built for a Composio take-home assessment. Original brief preserved at
+[`consigne.md`](consigne.md).
